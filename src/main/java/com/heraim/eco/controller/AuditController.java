@@ -7,13 +7,16 @@ import com.heraim.eco.model.AuditContext;
 import com.heraim.eco.repository.LedgerRepository;
 import com.heraim.eco.service.AuditRegistry;
 import com.heraim.eco.service.AuditStateMachine;
+import com.heraim.eco.service.PdfExtractionService;
 import com.heraim.eco.service.RetrievalService;
 import org.springframework.ai.document.Document;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import org.springframework.web.multipart.MultipartFile;
 import reactor.core.publisher.Flux;
 
+import java.io.IOException;
 import java.util.List;
 
 @RestController
@@ -23,15 +26,18 @@ public class AuditController {
     private final AuditRegistry auditRegistry;
     private final RetrievalService retrievalService;
     private final LedgerRepository ledgerRepository;
+    private final PdfExtractionService pdfExtractionService;
 
     public AuditController(AuditStateMachine auditStateMachine,
                            AuditRegistry auditRegistry,
                            RetrievalService retrievalService,
-                           LedgerRepository ledgerRepository) {
+                           LedgerRepository ledgerRepository,
+                           PdfExtractionService pdfExtractionService) {
         this.auditStateMachine = auditStateMachine;
         this.auditRegistry = auditRegistry;
         this.retrievalService = retrievalService;
         this.ledgerRepository = ledgerRepository;
+        this.pdfExtractionService = pdfExtractionService;
     }
 
     @PostMapping
@@ -74,5 +80,19 @@ public class AuditController {
             return Flux.empty();
         }
         return auditStateMachine.streamAnalysis(context.getContractText());
+    }
+
+    @PostMapping(value = "/extract", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<String> extractPdf(@RequestParam("file") MultipartFile file) throws IOException {
+        String text = pdfExtractionService.extractText(file);
+        return ResponseEntity.ok(text);
+    }
+
+    @PostMapping(value = "/upload", consumes = MediaType.MULTIPART_FORM_DATA_VALUE)
+    public ResponseEntity<AuditContext> uploadPdf(@RequestParam("file") MultipartFile file) throws IOException {
+        String text = pdfExtractionService.extractText(file);
+        AuditContext context = new AuditContext(text);
+        auditRegistry.save(context);
+        return ResponseEntity.ok(auditStateMachine.run(context));
     }
 }

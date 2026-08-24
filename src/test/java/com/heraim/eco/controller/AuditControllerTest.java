@@ -11,8 +11,10 @@ import com.heraim.eco.model.Level;
 import com.heraim.eco.repository.LedgerRepository;
 import com.heraim.eco.service.AuditRegistry;
 import com.heraim.eco.service.AuditStateMachine;
+import com.heraim.eco.service.PdfExtractionService;
 import com.heraim.eco.service.RetrievalService;
 import org.junit.jupiter.api.Test;
+import org.springframework.mock.web.MockMultipartFile;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.chat.messages.AssistantMessage;
 import org.springframework.ai.chat.model.ChatModel;
@@ -27,6 +29,7 @@ import org.springframework.data.domain.Sort;
 import org.springframework.data.repository.query.FluentQuery;
 import org.springframework.http.ResponseEntity;
 
+import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.Optional;
@@ -96,7 +99,7 @@ class AuditControllerTest {
             }
         };
 
-        AuditController controller = new AuditController(null, null, fakeRetrievalService, new FakeLedgerRepository());
+        AuditController controller = new AuditController(null, null, fakeRetrievalService, new FakeLedgerRepository(), null);
         List<Document> results = controller.search("test query");
 
         assertEquals(1, results.size());
@@ -124,7 +127,7 @@ class AuditControllerTest {
         FakeLedgerRepository fakeRepo = new FakeLedgerRepository();
         AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, fakeRepo);
         AuditRegistry registry = new AuditRegistry();
-        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, fakeRepo);
+        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, fakeRepo, null);
 
         // 1. POST /api/v1/audit (start)
         AuditRequest startRequest = new AuditRequest("Party A shall be liable for any and all damages without limitation");
@@ -200,7 +203,7 @@ class AuditControllerTest {
 
         ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
         AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, new FakeLedgerRepository());
-        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, new FakeLedgerRepository());
+        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, new FakeLedgerRepository(), null);
 
         reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis(context.getContractId());
         List<String> result = streamFlux.collectList().block();
@@ -211,11 +214,65 @@ class AuditControllerTest {
     @Test
     void testStreamAnalysisEndpointNotFoundReturnsEmpty() {
         AuditRegistry registry = new AuditRegistry();
-        AuditController controller = new AuditController(null, registry, null, new FakeLedgerRepository());
+        AuditController controller = new AuditController(null, registry, null, new FakeLedgerRepository(), null);
 
         reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis("non-existent-id");
         List<String> result = streamFlux.collectList().block();
 
         assertEquals(List.of(), result);
+    }
+
+    @Test
+    void testExtractPdfEndpoint() throws IOException {
+        PdfExtractionService fakePdfService = new PdfExtractionService(10, null, "eng", null) {
+            @Override
+            public String extractText(org.springframework.web.multipart.MultipartFile file) {
+                return "Extracted contract text from PDF";
+            }
+        };
+
+        AuditController controller = new AuditController(null, null, null, new FakeLedgerRepository(), fakePdfService);
+        MockMultipartFile file = new MockMultipartFile("file", "contract.pdf", "application/pdf", "dummy pdf content".getBytes());
+
+        ResponseEntity<String> response = controller.extractPdf(file);
+        assertEquals(200, response.getStatusCode().value());
+        assertEquals("Extracted contract text from PDF", response.getBody());
+    }
+
+    @Test
+    void testUploadPdfEndpoint() throws IOException {
+        PdfExtractionService fakePdfService = new PdfExtractionService(10, null, "eng", null) {
+            @Override
+            public String extractText(org.springframework.web.multipart.MultipartFile file) {
+                return "Party A shall be liable for all claims.";
+            }
+        };
+
+        RetrievalService fakeRetrieval = new RetrievalService(null) {
+            @Override
+            public List<Document> retrieve(String query) {
+                return List.of(new Document("Regulation: Liability"));
+            }
+        };
+
+        ChatModel fakeChatModel = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                String json = "{\"flags\":[{\"level\":\"LOW\",\"reason\":\"Standard risk\",\"quotedSpan\":\"Party A shall be liable\"}]}";
+                return new ChatResponse(List.of(new Generation(new AssistantMessage(json))));
+            }
+        };
+
+        ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
+        AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, new FakeLedgerRepository());
+        AuditRegistry registry = new AuditRegistry();
+        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, new FakeLedgerRepository(), fakePdfService);
+
+        MockMultipartFile file = new MockMultipartFile("file", "contract.pdf", "application/pdf", "pdf bytes".getBytes());
+        ResponseEntity<AuditContext> response = controller.uploadPdf(file);
+
+        assertNotNull(response.getBody());
+        assertEquals("Party A shall be liable for all claims.", response.getBody().getContractText());
+        assertEquals(AuditState.APPLY, response.getBody().getState());
     }
 }
