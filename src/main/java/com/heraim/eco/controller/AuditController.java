@@ -9,8 +9,10 @@ import com.heraim.eco.service.AuditRegistry;
 import com.heraim.eco.service.AuditStateMachine;
 import com.heraim.eco.service.RetrievalService;
 import org.springframework.ai.document.Document;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 
@@ -63,5 +65,14 @@ public class AuditController {
     @GetMapping("/{id}/ledger")
     public List<LedgerEntry> getLedger(@PathVariable String id) {
         return ledgerRepository.findByAuditIdOrderByTimestamp(id);
+    }
+
+    @GetMapping(value = "/{id}/analyze/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public Flux<String> streamAnalysis(@PathVariable String id) {
+        AuditContext context = auditRegistry.get(id);
+        if (context == null) {
+            return Flux.empty();
+        }
+        return auditStateMachine.streamAnalysis(context.getContractText());
     }
 }

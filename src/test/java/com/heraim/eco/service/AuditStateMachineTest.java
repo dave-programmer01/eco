@@ -228,4 +228,38 @@ class AuditStateMachineTest {
         AuditContext result = stateMachine.resume(context);
         assertEquals(AuditState.DONE, result.getState());
     }
+
+    @Test
+    void testStreamAnalysisReturnsFluxOfReasoningChunks() {
+        RetrievalService fakeRetrieval = new RetrievalService(null) {
+            @Override
+            public List<Document> retrieve(String query) {
+                return List.of(new Document("Regulation: Liability limits required."));
+            }
+        };
+
+        ChatModel fakeChatModel = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                return new ChatResponse(List.of(new Generation(new AssistantMessage("Response"))));
+            }
+
+            @Override
+            public reactor.core.publisher.Flux<ChatResponse> stream(Prompt prompt) {
+                return reactor.core.publisher.Flux.just(
+                        new ChatResponse(List.of(new Generation(new AssistantMessage("Clause 1: ")))),
+                        new ChatResponse(List.of(new Generation(new AssistantMessage("High risk detected due to unlimited liability."))))
+                );
+            }
+        };
+
+        ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
+        FakeLedgerRepository fakeRepo = new FakeLedgerRepository();
+        AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, fakeRepo);
+
+        reactor.core.publisher.Flux<String> streamFlux = stateMachine.streamAnalysis("Party A shall be liable for any and all damages.");
+        List<String> chunks = streamFlux.collectList().block();
+
+        assertEquals(List.of("Clause 1: ", "High risk detected due to unlimited liability."), chunks);
+    }
 }

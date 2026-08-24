@@ -169,4 +169,53 @@ class AuditControllerTest {
         assertNotNull(resumeResponse.getBody());
         assertEquals(AuditState.DONE, resumeResponse.getBody().getState());
     }
+
+    @Test
+    void testStreamAnalysisEndpoint() {
+        AuditRegistry registry = new AuditRegistry();
+        AuditContext context = new AuditContext("Party A shall indemnify Party B for all claims.");
+        registry.save(context);
+
+        RetrievalService fakeRetrieval = new RetrievalService(null) {
+            @Override
+            public List<Document> retrieve(String query) {
+                return List.of(new Document("Regulation: Indemnification terms."));
+            }
+        };
+
+        ChatModel fakeChatModel = new ChatModel() {
+            @Override
+            public ChatResponse call(Prompt prompt) {
+                return new ChatResponse(List.of(new Generation(new AssistantMessage("Response"))));
+            }
+
+            @Override
+            public reactor.core.publisher.Flux<ChatResponse> stream(Prompt prompt) {
+                return reactor.core.publisher.Flux.just(
+                        new ChatResponse(List.of(new Generation(new AssistantMessage("Analyzing indemnification clause: ")))),
+                        new ChatResponse(List.of(new Generation(new AssistantMessage("Exposure is uncapped."))))
+                );
+            }
+        };
+
+        ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
+        AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, new FakeLedgerRepository());
+        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, new FakeLedgerRepository());
+
+        reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis(context.getContractId());
+        List<String> result = streamFlux.collectList().block();
+
+        assertEquals(List.of("Analyzing indemnification clause: ", "Exposure is uncapped."), result);
+    }
+
+    @Test
+    void testStreamAnalysisEndpointNotFoundReturnsEmpty() {
+        AuditRegistry registry = new AuditRegistry();
+        AuditController controller = new AuditController(null, registry, null, new FakeLedgerRepository());
+
+        reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis("non-existent-id");
+        List<String> result = streamFlux.collectList().block();
+
+        assertEquals(List.of(), result);
+    }
 }

@@ -13,6 +13,7 @@ import com.heraim.eco.repository.LedgerRepository;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
+import reactor.core.publisher.Flux;
 
 import java.util.List;
 import java.util.stream.Collectors;
@@ -118,6 +119,26 @@ public class AuditStateMachine {
 
     public void decide(AuditContext context, String flagId, Decision decision) {
         recordDecision(context, flagId, decision);
+    }
+
+    public Flux<String> streamAnalysis(String contractText) {
+        List<Document> rules = retrievalService.retrieve(contractText);
+        String rulesText = rules.stream().map(Document::getText).collect(Collectors.joining("\n"));
+
+        String promptString = """
+        You are a senior compliance auditor. Thinking step by step, walk through each clause of the following contract and explain what risks you see against these regulations. Explain your risk reasoning aloud in clear prose.
+
+        === REGULATIONS ===
+        %s
+
+        === CONTRACT ===
+        %s
+        """.formatted(rulesText, contractText);
+
+        return chatClient.prompt()
+                .user(promptString)
+                .stream()
+                .content();
     }
 
     public AuditContext resume(AuditContext context){
