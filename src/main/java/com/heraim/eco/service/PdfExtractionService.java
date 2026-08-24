@@ -134,22 +134,27 @@ public class PdfExtractionService {
         }
 
         ProcessBuilder pb = new ProcessBuilder(command);
-        pb.redirectErrorStream(true);
         Process process = pb.start();
 
         StringBuilder output = new StringBuilder();
+        StringBuilder errorOutput = new StringBuilder();
         try (BufferedReader reader = new BufferedReader(
-                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8))) {
+                new InputStreamReader(process.getInputStream(), StandardCharsets.UTF_8));
+             BufferedReader errorReader = new BufferedReader(
+                new InputStreamReader(process.getErrorStream(), StandardCharsets.UTF_8))) {
             String line;
             while ((line = reader.readLine()) != null) {
                 output.append(line).append("\n");
+            }
+            while ((line = errorReader.readLine()) != null) {
+                errorOutput.append(line).append("\n");
             }
         }
 
         int exitCode = process.waitFor();
         if (exitCode != 0) {
-            log.warn("Tesseract CLI failed with exit code {}: {}", exitCode, output);
-            throw new RuntimeException("Tesseract CLI process exited with code " + exitCode + ": " + output);
+            log.warn("Tesseract CLI failed with exit code {}: {}", exitCode, errorOutput);
+            throw new RuntimeException("Tesseract CLI process exited with code " + exitCode + ": " + errorOutput);
         }
 
         return output.toString().trim();

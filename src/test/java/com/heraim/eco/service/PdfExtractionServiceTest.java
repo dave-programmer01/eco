@@ -103,6 +103,18 @@ class PdfExtractionServiceTest {
     }
 
     @Test
+    void testExtractScannedContractPdfFile() throws IOException {
+        java.io.File fileOnDisk = new java.io.File("scanned-contract.pdf");
+        if (fileOnDisk.exists()) {
+            byte[] bytes = java.nio.file.Files.readAllBytes(fileOnDisk.toPath());
+            MockMultipartFile file = new MockMultipartFile("file", "scanned-contract.pdf", "application/pdf", bytes);
+            String extracted = pdfExtractionService.extractText(file);
+            System.out.println("[DEBUG_LOG] Extracted text from scanned-contract.pdf:\n" + extracted);
+            assertTrue(extracted.length() > 0, "Extracted text from scanned-contract.pdf should not be empty");
+        }
+    }
+
+    @Test
     void testEmptyAndNullFiles() throws IOException {
         assertEquals("", pdfExtractionService.extractText((MockMultipartFile) null));
         assertEquals("", pdfExtractionService.extractText(new MockMultipartFile("file", new byte[0])));
