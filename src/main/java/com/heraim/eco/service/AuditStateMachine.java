@@ -2,9 +2,14 @@ package com.heraim.eco.service;
 
 import com.heraim.eco.dto.AnalysisResult;
 import com.heraim.eco.dto.FlagDto;
+import com.heraim.eco.entity.EntryType;
+import com.heraim.eco.entity.LedgerEntry;
 import com.heraim.eco.model.AuditContext;
 import com.heraim.eco.model.AuditState;
+import com.heraim.eco.model.Decision;
+import com.heraim.eco.model.Level;
 import com.heraim.eco.model.RiskFlag;
+import com.heraim.eco.repository.LedgerRepository;
 import org.springframework.ai.chat.client.ChatClient;
 import org.springframework.ai.document.Document;
 import org.springframework.stereotype.Service;
@@ -17,10 +22,12 @@ public class AuditStateMachine {
 
     private final ChatClient chatClient;
     private final RetrievalService retrievalService;
+    private final LedgerRepository ledgerRepository;
 
-    public AuditStateMachine(ChatClient.Builder chatClient, RetrievalService retrievalService) {
+    public AuditStateMachine(ChatClient.Builder chatClient, RetrievalService retrievalService, LedgerRepository ledgerRepository) {
         this.chatClient = chatClient.build();
         this.retrievalService = retrievalService;
+        this.ledgerRepository = ledgerRepository;
     }
 
     public AuditContext run (AuditContext context) {
@@ -77,9 +84,40 @@ public class AuditStateMachine {
 
         if (result != null && result.flags() != null) {
             for (FlagDto dto : result.flags()) {
-                context.getFlags().add(new RiskFlag(dto.level(), dto.reason(), dto.quotedSpan()));
+                RiskFlag flag = new RiskFlag(dto.level(), dto.reason(), dto.quotedSpan());
+                context.getFlags().add(flag);
+                ledgerRepository.save(new LedgerEntry(
+                        context.getContractId(),
+                        EntryType.FLAG_RAISED,
+                        flag.getLevel(),
+                        flag.getReason(),
+                        flag.getQuotedSpan()
+                ));
             }
         }
+    }
+
+    public void recordDecision(AuditContext context, String flagId, Decision decision) {
+        context.decide(flagId, decision);
+        RiskFlag flag = context.getFlags().stream()
+                .filter(f -> f.getFlagId().equals(flagId))
+                .findFirst()
+                .orElse(null);
+
+        Level level = flag != null ? flag.getLevel() : null;
+        String quotedSpan = flag != null ? flag.getQuotedSpan() : null;
+
+        ledgerRepository.save(new LedgerEntry(
+                context.getContractId(),
+                EntryType.DECISION_MADE,
+                level,
+                decision.name(),
+                quotedSpan
+        ));
+    }
+
+    public void decide(AuditContext context, String flagId, Decision decision) {
+        recordDecision(context, flagId, decision);
     }
 
     public AuditContext resume(AuditContext context){
