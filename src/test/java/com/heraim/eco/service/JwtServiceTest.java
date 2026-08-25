@@ -74,4 +74,20 @@ class JwtServiceTest {
 
         assertFalse(jwtService.isTokenValid(tamperedToken));
     }
+
+    @Test
+    void testJwtSecretAndExpirationFromSpringContext() {
+        // Verify custom properties / env var overrides can be instantiated
+        String customSecret = "0123456789012345678901234567890123456789012345678901234567890123";
+        long customExpiration = 7200000;
+        JwtService customService = new JwtService(customSecret, customExpiration);
+
+        User user = new User("env_user", "env@example.com", "hash", Role.USER);
+        String token = customService.generateToken(user);
+
+        assertNotNull(token);
+        assertEquals("env_user", customService.extractUsername(token));
+        assertTrue(customService.isTokenValid(token, user));
+        assertTrue(customService.extractExpiration(token).after(new java.util.Date(System.currentTimeMillis() + 3600000)));
+    }
 }

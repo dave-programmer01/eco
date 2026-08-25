@@ -38,7 +38,17 @@ Most "AI contract tools" are thin, single-prompt wrappers: they have no state, n
 
 - **Provider-Portable AI Layer.** Built on Spring AI's abstraction, so the embedding and chat providers can be swapped (OpenAI today) without touching business logic.
 
-- **Tested.** Unit and integration test coverage across the state machine, controller, retrieval service, and ledger persistence.
+- **Tested.** Unit and integration test coverage across the state machine, controller, retrieval service, JWT authentication, per-record authorization, and ledger persistence.
+
+- **Dual-Path PDF & Scanned-Document Ingestion.** Automatic extraction of digital text PDFs via Apache PDFBox, with seamless fallback to native Tesseract OCR page rendering for scanned/image documents.
+
+- **Interactive OpenAPI / Swagger Documentation.** Live interactive API explorer and documentation generated at `/swagger-ui/index.html` via SpringDoc OpenAPI.
+
+- **Versioned Database Migrations.** Reliable, automated database schema versioning managed via Flyway (`V1__init_schema.sql`).
+
+- **Multi-Tenant Ownership & Security.** JWT authentication with stateless security filter chains and strict per-record ownership enforcement (403 Forbidden on unauthorized audit access).
+
+- **Full-Stack Containerization.** Multi-stage `Dockerfile` with native Tesseract OCR runtime and orchestrated `docker-compose.yml` with health-checked PostgreSQL.
 
 ---
 

@@ -1,7 +1,8 @@
 services:
   postgres:
-    image: postgres:16
+    image: postgres:16-alpine
     container_name: eca-postgres
+    restart: unless-stopped
     environment:
       POSTGRES_DB: eca
       POSTGRES_USER: eca
@@ -10,6 +11,30 @@ services:
       - "5432:5432"
     volumes:
       - eca_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U eca -d eca"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: eca-backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+    ports:
+      - "8080:8080"
+    environment:
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/eca
+      SPRING_DATASOURCE_USERNAME: eca
+      SPRING_DATASOURCE_PASSWORD: eca_secret
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      JWT_SECRET: ${JWT_SECRET:-404E635266556A586E3272357538782F413F4428472B4B6250645367566B5970}
+      JWT_EXPIRATION_MS: ${JWT_EXPIRATION_MS:-86400000}
 
 volumes:
   eca_pgdata:

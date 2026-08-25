@@ -225,7 +225,10 @@ class AuditControllerTest {
         assertEquals(contractId, storedContext.getContractId());
 
         // Check ledger after start (FLAG_RAISED)
-        List<LedgerEntry> ledgerAfterStart = controller.getLedger(contractId);
+        ResponseEntity<List<LedgerEntry>> ledgerAfterStartResp = controller.getLedger(contractId, () -> "testUser");
+        assertEquals(200, ledgerAfterStartResp.getStatusCode().value());
+        List<LedgerEntry> ledgerAfterStart = ledgerAfterStartResp.getBody();
+        assertNotNull(ledgerAfterStart);
         assertEquals(1, ledgerAfterStart.size());
         assertEquals(EntryType.FLAG_RAISED, ledgerAfterStart.getFirst().getType());
         assertEquals(Level.HIGH, ledgerAfterStart.getFirst().getLevel());
@@ -233,13 +236,16 @@ class AuditControllerTest {
 
         // 2. POST /api/v1/audit/{id}/decision (approve the flag)
         DecisionRequest decisionRequest = new DecisionRequest(flagId, Decision.APPROVED);
-        ResponseEntity<AuditContext> decisionResponse = controller.decide(contractId, decisionRequest);
+        ResponseEntity<AuditContext> decisionResponse = controller.decide(contractId, decisionRequest, () -> "testUser");
 
         assertNotNull(decisionResponse.getBody());
         assertEquals(Decision.APPROVED, decisionResponse.getBody().getFlags().getFirst().getDecision());
 
         // Check ledger after decision (FLAG_RAISED + DECISION_MADE)
-        List<LedgerEntry> ledgerAfterDecision = controller.getLedger(contractId);
+        ResponseEntity<List<LedgerEntry>> ledgerAfterDecisionResp = controller.getLedger(contractId, () -> "testUser");
+        assertEquals(200, ledgerAfterDecisionResp.getStatusCode().value());
+        List<LedgerEntry> ledgerAfterDecision = ledgerAfterDecisionResp.getBody();
+        assertNotNull(ledgerAfterDecision);
         assertEquals(2, ledgerAfterDecision.size());
         assertEquals(EntryType.FLAG_RAISED, ledgerAfterDecision.get(0).getType());
         assertEquals(EntryType.DECISION_MADE, ledgerAfterDecision.get(1).getType());
@@ -248,7 +254,7 @@ class AuditControllerTest {
         assertEquals("Party A shall be liable for any and all damages without limitation", ledgerAfterDecision.get(1).getQuotedSpan());
 
         // 3. POST /api/v1/audit/{id}/resume (resume audit after decision)
-        ResponseEntity<AuditContext> resumeResponse = controller.resume(contractId);
+        ResponseEntity<AuditContext> resumeResponse = controller.resume(contractId, () -> "testUser");
 
         assertNotNull(resumeResponse.getBody());
         assertEquals(AuditState.DONE, resumeResponse.getBody().getState());
@@ -257,7 +263,7 @@ class AuditControllerTest {
         assertEquals(AuditState.DONE, auditRepository.findById(contractId).get().getState());
 
         // 4. GET /api/v1/audit/{id} and GET /api/v1/audit
-        ResponseEntity<AuditContext> getResponse = controller.getAudit(contractId);
+        ResponseEntity<AuditContext> getResponse = controller.getAudit(contractId, () -> "testUser");
         assertEquals(200, getResponse.getStatusCode().value());
         assertEquals(contractId, getResponse.getBody().getContractId());
 
@@ -270,9 +276,34 @@ class AuditControllerTest {
     }
 
     @Test
+    void testPerRecordAuthorizationEnforcement() {
+        FakeAuditRepository auditRepository = new FakeAuditRepository();
+        AuditContext user1Audit = new AuditContext("Confidential text", "user1");
+        auditRepository.save(user1Audit);
+        String auditId = user1Audit.getContractId();
+
+        AuditController controller = new AuditController(null, auditRepository, null, new FakeLedgerRepository(), null);
+
+        // Access by owner should succeed
+        assertEquals(200, controller.getAudit(auditId, () -> "user1").getStatusCode().value());
+        assertEquals(200, controller.getLedger(auditId, () -> "user1").getStatusCode().value());
+
+        // Access by different user should return 403 Forbidden
+        assertEquals(403, controller.getAudit(auditId, () -> "user2").getStatusCode().value());
+        assertEquals(403, controller.getLedger(auditId, () -> "user2").getStatusCode().value());
+        assertEquals(403, controller.resume(auditId, () -> "user2").getStatusCode().value());
+        assertEquals(403, controller.decide(auditId, new DecisionRequest("someFlag", Decision.APPROVED), () -> "user2").getStatusCode().value());
+
+        // Anonymous / unauthenticated access to owned record should return 403 Forbidden
+        assertEquals(403, controller.getAudit(auditId, null).getStatusCode().value());
+        assertEquals(403, controller.getLedger(auditId, null).getStatusCode().value());
+    }
+
+    @Test
     void testStreamAnalysisEndpoint() {
         FakeAuditRepository auditRepository = new FakeAuditRepository();
         AuditContext context = new AuditContext("Party A shall indemnify Party B for all claims.");
+        context.setOwnerId("streamUser");
         auditRepository.save(context);
 
         RetrievalService fakeRetrieval = new RetrievalService(null) {
@@ -301,7 +332,7 @@ class AuditControllerTest {
         AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, new FakeLedgerRepository());
         AuditController controller = new AuditController(stateMachine, auditRepository, fakeRetrieval, new FakeLedgerRepository(), null);
 
-        reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis(context.getContractId());
+        reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis(context.getContractId(), () -> "streamUser");
         List<String> result = streamFlux.collectList().block();
 
         assertEquals(List.of("Analyzing indemnification clause: ", "Exposure is uncapped."), result);
@@ -312,7 +343,7 @@ class AuditControllerTest {
         FakeAuditRepository auditRepository = new FakeAuditRepository();
         AuditController controller = new AuditController(null, auditRepository, null, new FakeLedgerRepository(), null);
 
-        reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis("non-existent-id");
+        reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis("non-existent-id", () -> "anyUser");
         List<String> result = streamFlux.collectList().block();
 
         assertEquals(List.of(), result);

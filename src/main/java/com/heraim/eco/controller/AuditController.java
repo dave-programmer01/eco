@@ -10,10 +10,12 @@ import com.heraim.eco.service.AuditStateMachine;
 import com.heraim.eco.service.PdfExtractionService;
 import com.heraim.eco.service.RetrievalService;
 import org.springframework.ai.document.Document;
+import org.springframework.http.HttpStatus;
 import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.*;
 import org.springframework.web.multipart.MultipartFile;
+import org.springframework.web.server.ResponseStatusException;
 import reactor.core.publisher.Flux;
 
 import java.io.IOException;
@@ -53,10 +55,13 @@ public class AuditController {
     }
 
     @PostMapping("/{id}/resume")
-    public ResponseEntity<AuditContext> resume(@PathVariable String id) {
+    public ResponseEntity<AuditContext> resume(@PathVariable String id, Principal principal) {
         AuditContext context = auditRepository.findById(id).orElse(null);
         if (context == null) {
             return ResponseEntity.notFound().build();
+        }
+        if (!isAuthorized(context, principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         AuditContext resumed = auditStateMachine.resume(context);
         AuditContext saved = auditRepository.save(resumed);
@@ -66,11 +71,15 @@ public class AuditController {
     @PostMapping("/{id}/decision")
     public ResponseEntity<AuditContext> decide(
             @PathVariable String id,
-            @RequestBody DecisionRequest request
+            @RequestBody DecisionRequest request,
+            Principal principal
     ) {
         AuditContext context = auditRepository.findById(id).orElse(null);
         if (context == null) {
             return ResponseEntity.notFound().build();
+        }
+        if (!isAuthorized(context, principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
         }
         auditStateMachine.recordDecision(context, request.flagId(), request.decision());
         AuditContext saved = auditRepository.save(context);
@@ -78,10 +87,15 @@ public class AuditController {
     }
 
     @GetMapping("/{id}")
-    public ResponseEntity<AuditContext> getAudit(@PathVariable String id) {
-        return auditRepository.findById(id)
-                .map(ResponseEntity::ok)
-                .orElse(ResponseEntity.notFound().build());
+    public ResponseEntity<AuditContext> getAudit(@PathVariable String id, Principal principal) {
+        AuditContext context = auditRepository.findById(id).orElse(null);
+        if (context == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!isAuthorized(context, principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return ResponseEntity.ok(context);
     }
 
     @GetMapping
@@ -99,15 +113,25 @@ public class AuditController {
     }
 
     @GetMapping("/{id}/ledger")
-    public List<LedgerEntry> getLedger(@PathVariable String id) {
-        return ledgerRepository.findByAuditIdOrderByTimestamp(id);
+    public ResponseEntity<List<LedgerEntry>> getLedger(@PathVariable String id, Principal principal) {
+        AuditContext context = auditRepository.findById(id).orElse(null);
+        if (context == null) {
+            return ResponseEntity.notFound().build();
+        }
+        if (!isAuthorized(context, principal)) {
+            return ResponseEntity.status(HttpStatus.FORBIDDEN).build();
+        }
+        return ResponseEntity.ok(ledgerRepository.findByAuditIdOrderByTimestamp(id));
     }
 
     @GetMapping(value = "/{id}/analyze/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public Flux<String> streamAnalysis(@PathVariable String id) {
+    public Flux<String> streamAnalysis(@PathVariable String id, Principal principal) {
         AuditContext context = auditRepository.findById(id).orElse(null);
         if (context == null) {
             return Flux.empty();
+        }
+        if (!isAuthorized(context, principal)) {
+            return Flux.error(new ResponseStatusException(HttpStatus.FORBIDDEN, "Access denied"));
         }
         return auditStateMachine.streamAnalysis(context.getContractText());
     }
@@ -128,5 +152,12 @@ public class AuditController {
         AuditContext processed = auditStateMachine.run(context);
         AuditContext saved = auditRepository.save(processed);
         return ResponseEntity.ok(saved);
+    }
+
+    private boolean isAuthorized(AuditContext context, Principal principal) {
+        if (context.getOwnerId() == null) {
+            return true;
+        }
+        return principal != null && context.getOwnerId().equals(principal.getName());
     }
 }
