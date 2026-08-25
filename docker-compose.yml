@@ -1,0 +1,15 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: eca-postgres
+    environment:
+      POSTGRES_DB: eca
+      POSTGRES_USER: eca
+      POSTGRES_PASSWORD: eca_secret
+    ports:
+      - "5432:5432"
+    volumes:
+      - eca_pgdata:/var/lib/postgresql/data
+
+volumes:
+  eca_pgdata:

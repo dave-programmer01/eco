@@ -8,8 +8,8 @@ import com.heraim.eco.model.AuditContext;
 import com.heraim.eco.model.AuditState;
 import com.heraim.eco.model.Decision;
 import com.heraim.eco.model.Level;
+import com.heraim.eco.repository.AuditRepository;
 import com.heraim.eco.repository.LedgerRepository;
-import com.heraim.eco.service.AuditRegistry;
 import com.heraim.eco.service.AuditStateMachine;
 import com.heraim.eco.service.PdfExtractionService;
 import com.heraim.eco.service.RetrievalService;
@@ -32,13 +32,88 @@ import org.springframework.http.ResponseEntity;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Optional;
+import java.util.concurrent.ConcurrentHashMap;
 import java.util.function.Function;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
 import static org.junit.jupiter.api.Assertions.assertNotNull;
 
 class AuditControllerTest {
+
+    static class FakeAuditRepository implements AuditRepository {
+        final Map<String, AuditContext> storage = new ConcurrentHashMap<>();
+
+        @Override
+        public <S extends AuditContext> S save(S entity) {
+            storage.put(entity.getContractId(), entity);
+            return entity;
+        }
+
+        @Override
+        public Optional<AuditContext> findById(String s) {
+            return Optional.ofNullable(storage.get(s));
+        }
+
+        @Override
+        public List<AuditContext> findAll() {
+            return new ArrayList<>(storage.values());
+        }
+
+        @Override
+        public boolean existsById(String s) {
+            return storage.containsKey(s);
+        }
+
+        @Override
+        public void deleteById(String s) {
+            storage.remove(s);
+        }
+
+        @Override public void flush() {}
+        @Override public <S extends AuditContext> S saveAndFlush(S entity) { return save(entity); }
+        @Override public <S extends AuditContext> List<S> saveAllAndFlush(Iterable<S> entities) { return List.of(); }
+        @Override public void deleteAllInBatch(Iterable<AuditContext> entities) {}
+        @Override public void deleteAllByIdInBatch(Iterable<String> strings) {}
+        @Override public void deleteAllInBatch() {}
+        @Override public AuditContext getOne(String s) { return storage.get(s); }
+        @Override public AuditContext getById(String s) { return storage.get(s); }
+        @Override public AuditContext getReferenceById(String s) { return storage.get(s); }
+        @Override public <S extends AuditContext> Optional<S> findOne(Example<S> example) { return Optional.empty(); }
+        @Override public <S extends AuditContext> List<S> findAll(Example<S> example) { return List.of(); }
+        @Override public <S extends AuditContext> List<S> findAll(Example<S> example, Sort sort) { return List.of(); }
+        @Override public <S extends AuditContext> Page<S> findAll(Example<S> example, Pageable pageable) { return Page.empty(); }
+        @Override public <S extends AuditContext> long count(Example<S> example) { return 0; }
+        @Override public <S extends AuditContext> boolean exists(Example<S> example) { return false; }
+        @Override public <S extends AuditContext, R> R findBy(Example<S> example, Function<FluentQuery.FetchableFluentQuery<S>, R> queryFunction) { return null; }
+        @Override public <S extends AuditContext> List<S> saveAll(Iterable<S> entities) {
+            for (S entity : entities) {
+                save(entity);
+            }
+            return (List<S>) entities;
+        }
+        @Override public List<AuditContext> findAllById(Iterable<String> strings) { return List.of(); }
+        @Override public long count() { return storage.size(); }
+        @Override public void delete(AuditContext entity) { storage.remove(entity.getContractId()); }
+        @Override public void deleteAllById(Iterable<? extends String> strings) {}
+        @Override public void deleteAll(Iterable<? extends AuditContext> entities) {}
+        @Override public void deleteAll() { storage.clear(); }
+        @Override public List<AuditContext> findAll(Sort sort) { return findAll(); }
+        @Override public Page<AuditContext> findAll(Pageable pageable) { return Page.empty(); }
+
+        @Override
+        public List<AuditContext> findByOwnerId(String ownerId) {
+            return storage.values().stream()
+                    .filter(a -> ownerId.equals(a.getOwnerId()))
+                    .toList();
+        }
+
+        @Override
+        public List<AuditContext> findByOwnerIdOrderByContractIdDesc(String ownerId) {
+            return findByOwnerId(ownerId);
+        }
+    }
 
     static class FakeLedgerRepository implements LedgerRepository {
         final List<LedgerEntry> entries = new ArrayList<>();
@@ -99,7 +174,7 @@ class AuditControllerTest {
             }
         };
 
-        AuditController controller = new AuditController(null, null, fakeRetrievalService, new FakeLedgerRepository(), null);
+        AuditController controller = new AuditController(null, new FakeAuditRepository(), fakeRetrievalService, new FakeLedgerRepository(), null);
         List<Document> results = controller.search("test query");
 
         assertEquals(1, results.size());
@@ -126,22 +201,28 @@ class AuditControllerTest {
         ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
         FakeLedgerRepository fakeRepo = new FakeLedgerRepository();
         AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, fakeRepo);
-        AuditRegistry registry = new AuditRegistry();
-        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, fakeRepo, null);
+        FakeAuditRepository auditRepository = new FakeAuditRepository();
+        AuditController controller = new AuditController(stateMachine, auditRepository, fakeRetrieval, fakeRepo, null);
 
         // 1. POST /api/v1/audit (start)
         AuditRequest startRequest = new AuditRequest("Party A shall be liable for any and all damages without limitation");
-        ResponseEntity<AuditContext> startResponse = controller.start(startRequest);
+        ResponseEntity<AuditContext> startResponse = controller.start(startRequest, () -> "testUser");
 
         assertNotNull(startResponse.getBody());
         AuditContext context = startResponse.getBody();
         String contractId = context.getContractId();
+        assertEquals("testUser", context.getOwnerId());
         assertEquals(AuditState.HUMAN_REVIEW, context.getState());
         assertEquals(1, context.getFlags().size());
         assertEquals(Level.HIGH, context.getFlags().getFirst().getLevel());
         assertEquals(Decision.PENDING, context.getFlags().getFirst().getDecision());
 
         String flagId = context.getFlags().getFirst().getFlagId();
+
+        // Check audit is saved in repository
+        AuditContext storedContext = auditRepository.findById(contractId).orElse(null);
+        assertNotNull(storedContext);
+        assertEquals(contractId, storedContext.getContractId());
 
         // Check ledger after start (FLAG_RAISED)
         List<LedgerEntry> ledgerAfterStart = controller.getLedger(contractId);
@@ -171,13 +252,28 @@ class AuditControllerTest {
 
         assertNotNull(resumeResponse.getBody());
         assertEquals(AuditState.DONE, resumeResponse.getBody().getState());
+
+        // Check repository has the final DONE state
+        assertEquals(AuditState.DONE, auditRepository.findById(contractId).get().getState());
+
+        // 4. GET /api/v1/audit/{id} and GET /api/v1/audit
+        ResponseEntity<AuditContext> getResponse = controller.getAudit(contractId);
+        assertEquals(200, getResponse.getStatusCode().value());
+        assertEquals(contractId, getResponse.getBody().getContractId());
+
+        List<AuditContext> allAudits = controller.listAudits(() -> "testUser", false);
+        assertEquals(1, allAudits.size());
+        assertEquals("testUser", allAudits.getFirst().getOwnerId());
+
+        List<AuditContext> otherUserAudits = controller.listAudits(() -> "otherUser", false);
+        assertEquals(0, otherUserAudits.size());
     }
 
     @Test
     void testStreamAnalysisEndpoint() {
-        AuditRegistry registry = new AuditRegistry();
+        FakeAuditRepository auditRepository = new FakeAuditRepository();
         AuditContext context = new AuditContext("Party A shall indemnify Party B for all claims.");
-        registry.save(context);
+        auditRepository.save(context);
 
         RetrievalService fakeRetrieval = new RetrievalService(null) {
             @Override
@@ -203,7 +299,7 @@ class AuditControllerTest {
 
         ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
         AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, new FakeLedgerRepository());
-        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, new FakeLedgerRepository(), null);
+        AuditController controller = new AuditController(stateMachine, auditRepository, fakeRetrieval, new FakeLedgerRepository(), null);
 
         reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis(context.getContractId());
         List<String> result = streamFlux.collectList().block();
@@ -213,8 +309,8 @@ class AuditControllerTest {
 
     @Test
     void testStreamAnalysisEndpointNotFoundReturnsEmpty() {
-        AuditRegistry registry = new AuditRegistry();
-        AuditController controller = new AuditController(null, registry, null, new FakeLedgerRepository(), null);
+        FakeAuditRepository auditRepository = new FakeAuditRepository();
+        AuditController controller = new AuditController(null, auditRepository, null, new FakeLedgerRepository(), null);
 
         reactor.core.publisher.Flux<String> streamFlux = controller.streamAnalysis("non-existent-id");
         List<String> result = streamFlux.collectList().block();
@@ -231,7 +327,7 @@ class AuditControllerTest {
             }
         };
 
-        AuditController controller = new AuditController(null, null, null, new FakeLedgerRepository(), fakePdfService);
+        AuditController controller = new AuditController(null, new FakeAuditRepository(), null, new FakeLedgerRepository(), fakePdfService);
         MockMultipartFile file = new MockMultipartFile("file", "contract.pdf", "application/pdf", "dummy pdf content".getBytes());
 
         ResponseEntity<String> response = controller.extractPdf(file);
@@ -265,14 +361,18 @@ class AuditControllerTest {
 
         ChatClient.Builder builder = ChatClient.builder(fakeChatModel);
         AuditStateMachine stateMachine = new AuditStateMachine(builder, fakeRetrieval, new FakeLedgerRepository());
-        AuditRegistry registry = new AuditRegistry();
-        AuditController controller = new AuditController(stateMachine, registry, fakeRetrieval, new FakeLedgerRepository(), fakePdfService);
+        FakeAuditRepository auditRepository = new FakeAuditRepository();
+        AuditController controller = new AuditController(stateMachine, auditRepository, fakeRetrieval, new FakeLedgerRepository(), fakePdfService);
 
         MockMultipartFile file = new MockMultipartFile("file", "contract.pdf", "application/pdf", "pdf bytes".getBytes());
-        ResponseEntity<AuditContext> response = controller.uploadPdf(file);
+        ResponseEntity<AuditContext> response = controller.uploadPdf(file, () -> "uploaderUser");
 
         assertNotNull(response.getBody());
+        assertEquals("uploaderUser", response.getBody().getOwnerId());
         assertEquals("Party A shall be liable for all claims.", response.getBody().getContractText());
         assertEquals(AuditState.APPLY, response.getBody().getState());
+
+        // Verify stored in repository
+        assertNotNull(auditRepository.findById(response.getBody().getContractId()).orElse(null));
     }
 }

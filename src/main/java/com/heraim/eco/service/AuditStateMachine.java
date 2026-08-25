@@ -86,7 +86,7 @@ public class AuditStateMachine {
         if (result != null && result.flags() != null) {
             for (FlagDto dto : result.flags()) {
                 RiskFlag flag = new RiskFlag(dto.level(), dto.reason(), dto.quotedSpan());
-                context.getFlags().add(flag);
+                context.addFlag(flag);
                 ledgerRepository.save(new LedgerEntry(
                         context.getContractId(),
                         EntryType.FLAG_RAISED,

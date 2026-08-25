@@ -13,7 +13,11 @@ import org.springframework.context.annotation.Primary;
 import java.util.List;
 
 @SpringBootTest(properties = {
-        "spring.ai.openai.api-key=test-key"
+        "spring.ai.openai.api-key=test-key",
+        "spring.datasource.url=jdbc:h2:mem:testdb;DB_CLOSE_DELAY=-1",
+        "spring.datasource.driverClassName=org.h2.Driver",
+        "spring.datasource.username=sa",
+        "spring.datasource.password="
 })
 class EcoApplicationTests {
 

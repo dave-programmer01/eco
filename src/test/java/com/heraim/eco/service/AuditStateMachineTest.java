@@ -136,7 +136,7 @@ class AuditStateMachineTest {
 
         AuditContext context = new AuditContext("Sample contract");
         com.heraim.eco.model.RiskFlag flag = new com.heraim.eco.model.RiskFlag(Level.HIGH, "High risk clause", "Unlimited liability clause");
-        context.getFlags().add(flag);
+        context.addFlag(flag);
 
         stateMachine.recordDecision(context, flag.getFlagId(), com.heraim.eco.model.Decision.APPROVED);
 
@@ -196,7 +196,7 @@ class AuditStateMachineTest {
 
         AuditContext context = new AuditContext("Contract text");
         context.setState(AuditState.HUMAN_REVIEW);
-        context.getFlags().add(new com.heraim.eco.model.RiskFlag(Level.HIGH, "High risk clause", "Unlimited liability"));
+        context.addFlag(new com.heraim.eco.model.RiskFlag(Level.HIGH, "High risk clause", "Unlimited liability"));
 
         AuditContext result = stateMachine.resume(context);
         assertEquals(AuditState.HUMAN_REVIEW, result.getState());
@@ -220,7 +220,7 @@ class AuditStateMachineTest {
         AuditContext context = new AuditContext("Contract text");
         context.setState(AuditState.HUMAN_REVIEW);
         com.heraim.eco.model.RiskFlag flag = new com.heraim.eco.model.RiskFlag(Level.HIGH, "High risk clause", "Unlimited liability");
-        context.getFlags().add(flag);
+        context.addFlag(flag);
 
         // Make decision
         context.decide(flag.getFlagId(), com.heraim.eco.model.Decision.APPROVED);

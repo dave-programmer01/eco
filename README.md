@@ -90,7 +90,7 @@ AuditController ──▶ AuditStateMachine ──▶ RetrievalService ──▶
 │ │
 │ └────────────▶ ChatClient (structured output) ──▶ OpenAI
 ▼
-AuditRegistry (live runs) LedgerRepository (immutable trail) ──▶ Database
+AuditRepository (persisted audits) · LedgerRepository (immutable trail) ──▶ Database
 ```
 
 ---
